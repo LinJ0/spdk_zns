@@ -13,11 +13,17 @@
 #include "spdk/log.h"
 #include "spdk/string.h"
 
+#include "spdk/bdev.h"
+#include "spdk/bdev_zone.h"
+
+
 /*
  * We'll use this struct to gather housekeeping hello_context to pass between
  * our events and callbacks.
  */
 struct hello_context_t {
+	struct spdk_bdev *bdev; // for reset zone
+	struct spdk_bs_dev *bs_dev;
 	struct spdk_blob_store *bs;
 	struct spdk_blob *blob;
 	spdk_blob_id blobid;
@@ -194,6 +200,21 @@ blob_write(struct hello_context_t *hello_context)
 {
 	SPDK_NOTICELOG("entry\n");
 
+	/* Let's perform the write, 1 io_unit at offset 0. */
+	spdk_blob_io_write(hello_context->blob, hello_context->channel,
+			   hello_context->write_buff,
+			   0, 1, write_complete, hello_context);
+}
+
+
+/*
+ * Function for writing to a buffer.
+ */
+static void
+buffer_write(struct hello_context_t *hello_context)
+{
+	SPDK_NOTICELOG("entry\n");
+
 	/*
 	 * Buffers for data transfer need to be allocated via SPDK. We will
 	 * transfer 1 io_unit of 4K aligned data at offset 0 in the blob.
@@ -216,10 +237,18 @@ blob_write(struct hello_context_t *hello_context)
 		return;
 	}
 
-	/* Let's perform the write, 1 io_unit at offset 0. */
-	spdk_blob_io_write(hello_context->blob, hello_context->channel,
-			   hello_context->write_buff,
-			   0, 1, write_complete, hello_context);
+
+	/* must reset zone before write to zns */
+	/* recognize zone by bdev.h API*/
+	/* reference: hello_bdev 
+	if (spdk_bdev_is_zoned(hello_context->bdev)) {
+		hello_reset_zone(hello_context);
+		return;
+	}
+	*/
+
+	blob_write(hello_context);	
+	
 }
 
 /*
@@ -238,7 +267,7 @@ sync_complete(void *arg1, int bserrno)
 	}
 
 	/* Blob has been created & sized & MD sync'd, let's write to it. */
-	blob_write(hello_context);
+	buffer_write(hello_context);
 }
 
 static void
@@ -341,6 +370,7 @@ bs_init_complete(void *cb_arg, struct spdk_blob_store *bs,
 		 int bserrno)
 {
 	struct hello_context_t *hello_context = cb_arg;
+	hello_context->bdev = NULL;
 
 	SPDK_NOTICELOG("entry\n");
 	if (bserrno) {
@@ -351,6 +381,12 @@ bs_init_complete(void *cb_arg, struct spdk_blob_store *bs,
 
 	hello_context->bs = bs;
 	SPDK_NOTICELOG("blobstore: %p\n", hello_context->bs);
+
+	/* find out the bdev descriptor through setting bdev_blob then we can find out the bdev */
+    //hello_context->bdev = spdk_bdev_desc_get_bdev(hello_context->bdev_desc);
+    hello_context->bdev = hello_context->bs_dev->get_base_bdev(hello_context->bs_dev);
+	SPDK_NOTICELOG("bdev: %p\n", hello_context->bdev);
+
 	/*
 	 * We will use the io_unit size in allocating buffers, etc., later
 	 * so we'll just save it in out context buffer here.
@@ -409,7 +445,8 @@ hello_start(void *arg1)
 		spdk_app_stop(-1);
 		return;
 	}
-
+	
+	hello_context->bs_dev = bs_dev;
 	spdk_bs_init(bs_dev, NULL, bs_init_complete, hello_context);
 }
 
