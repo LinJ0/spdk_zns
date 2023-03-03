@@ -22,7 +22,10 @@
  * our events and callbacks.
  */
 struct hello_context_t {
+	struct spdk_bdev_desc *bdev_desc; //for open bdev
 	struct spdk_bdev *bdev; // for reset zone
+	struct spdk_io_channel *bdev_io_channel; // for reset zone
+	struct spdk_bdev_io_wait_entry bdev_io_wait; // for reset zone
 	struct spdk_bs_dev *bs_dev;
 	struct spdk_blob_store *bs;
 	struct spdk_blob *blob;
@@ -193,25 +196,10 @@ write_complete(void *arg1, int bserrno)
 }
 
 /*
- * Function for writing to a blob.
- */
-static void
-blob_write(struct hello_context_t *hello_context)
-{
-	SPDK_NOTICELOG("entry\n");
-
-	/* Let's perform the write, 1 io_unit at offset 0. */
-	spdk_blob_io_write(hello_context->blob, hello_context->channel,
-			   hello_context->write_buff,
-			   0, 1, write_complete, hello_context);
-}
-
-
-/*
  * Function for writing to a buffer.
  */
 static void
-buffer_write(struct hello_context_t *hello_context)
+blob_write(struct hello_context_t *hello_context)
 {
 	SPDK_NOTICELOG("entry\n");
 
@@ -237,18 +225,10 @@ buffer_write(struct hello_context_t *hello_context)
 		return;
 	}
 
-
-	/* must reset zone before write to zns */
-	/* recognize zone by bdev.h API*/
-	/* reference: hello_bdev 
-	if (spdk_bdev_is_zoned(hello_context->bdev)) {
-		hello_reset_zone(hello_context);
-		return;
-	}
-	*/
-
-	blob_write(hello_context);	
-	
+	/* Let's perform the write, 1 io_unit at offset 0. */
+    spdk_blob_io_write(hello_context->blob, hello_context->channel,
+               hello_context->write_buff,
+               0, 1, write_complete, hello_context);
 }
 
 /*
@@ -267,7 +247,7 @@ sync_complete(void *arg1, int bserrno)
 	}
 
 	/* Blob has been created & sized & MD sync'd, let's write to it. */
-	buffer_write(hello_context);
+	blob_write(hello_context);
 }
 
 static void
@@ -362,6 +342,7 @@ create_blob(struct hello_context_t *hello_context)
 	spdk_bs_create_blob(hello_context->bs, blob_create_complete, hello_context);
 }
 
+
 /*
  * Callback function for initializing the blobstore.
  */
@@ -370,7 +351,7 @@ bs_init_complete(void *cb_arg, struct spdk_blob_store *bs,
 		 int bserrno)
 {
 	struct hello_context_t *hello_context = cb_arg;
-	hello_context->bdev = NULL;
+
 
 	SPDK_NOTICELOG("entry\n");
 	if (bserrno) {
@@ -381,11 +362,6 @@ bs_init_complete(void *cb_arg, struct spdk_blob_store *bs,
 
 	hello_context->bs = bs;
 	SPDK_NOTICELOG("blobstore: %p\n", hello_context->bs);
-
-	/* find out the bdev descriptor through setting bdev_blob then we can find out the bdev */
-    //hello_context->bdev = spdk_bdev_desc_get_bdev(hello_context->bdev_desc);
-    hello_context->bdev = hello_context->bs_dev->get_base_bdev(hello_context->bs_dev);
-	SPDK_NOTICELOG("bdev: %p\n", hello_context->bdev);
 
 	/*
 	 * We will use the io_unit size in allocating buffers, etc., later
@@ -404,20 +380,97 @@ bs_init_complete(void *cb_arg, struct spdk_blob_store *bs,
 
 static void
 base_bdev_event_cb(enum spdk_bdev_event_type type, struct spdk_bdev *bdev,
-		   void *event_ctx)
-{
-	SPDK_WARNLOG("Unsupported bdev event: type %d\n", type);
+           void *event_ctx)
+{   
+    SPDK_WARNLOG("Unsupported bdev event: type %d\n", type);
 }
+
+static void
+bs_init(void *arg1)
+{
+	struct hello_context_t *hello_context = arg1;
+    struct spdk_bs_dev *bs_dev = NULL;
+    int rc = 0;
+
+    SPDK_NOTICELOG("entry\n");
+
+	/* init blob storage */
+    rc = spdk_bdev_create_bs_dev_ext("Nvme0n1", base_bdev_event_cb, NULL, &bs_dev);
+    if (rc != 0) {
+        SPDK_ERRLOG("Could not create blob bdev, %s!!\n",
+                spdk_strerror(-rc));
+        spdk_app_stop(-1);
+        return;
+    }
+    
+    hello_context->bs_dev = bs_dev;
+    spdk_bs_init(bs_dev, NULL, bs_init_complete, hello_context);
+}
+
+static void
+reset_zone_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
+{
+	struct hello_context_t *hello_context = cb_arg;
+
+	/* Complete the I/O */
+	spdk_bdev_free_io(bdev_io);
+
+	if (!success) {
+		SPDK_ERRLOG("bdev io reset zone error: %d\n", EIO);
+		spdk_put_io_channel(hello_context->bdev_io_channel);
+		spdk_bdev_close(hello_context->bdev_desc);
+		spdk_app_stop(-1);
+		return;
+	}
+
+	bs_init(hello_context);
+}
+
+/*
+ * Reset zone before init blob storage
+ */
+static void
+hello_reset_zone(void *arg)
+{
+	struct hello_context_t *hello_context = arg;
+	int rc = 0;
+
+	rc = spdk_bdev_zone_management(hello_context->bdev_desc, hello_context->bdev_io_channel,
+				       0, SPDK_BDEV_ZONE_RESET, reset_zone_complete, hello_context);
+
+	if (rc == -ENOMEM) {
+		SPDK_NOTICELOG("Queueing io\n");
+		/* In case we cannot perform I/O now, queue I/O */
+		hello_context->bdev_io_wait.bdev = hello_context->bdev;
+		hello_context->bdev_io_wait.cb_fn = hello_reset_zone;
+		hello_context->bdev_io_wait.cb_arg = hello_context;
+		spdk_bdev_queue_io_wait(hello_context->bdev, hello_context->bdev_io_channel,
+					&hello_context->bdev_io_wait);
+	} else if (rc) {
+		SPDK_ERRLOG("%s error while resetting zone: %d\n", spdk_strerror(-rc), rc);
+		spdk_put_io_channel(hello_context->bdev_io_channel);
+		spdk_bdev_close(hello_context->bdev_desc);
+		spdk_app_stop(-1);
+	}
+}
+
 
 /*
  * Our initial event that kicks off everything from main().
  */
 static void
+hello_bdev_event_cb(enum spdk_bdev_event_type type, struct spdk_bdev *bdev,
+		    void *event_ctx)
+{
+	SPDK_WARNLOG("Unsupported bdev event: type %d\n", type);
+	// SPDK_NOTICELOG("Unsupported bdev event: type %d\n", type);
+}
+
+static void
 hello_start(void *arg1)
 {
 	struct hello_context_t *hello_context = arg1;
-	struct spdk_bs_dev *bs_dev = NULL;
-	int rc;
+	int rc = 0;
 
 	SPDK_NOTICELOG("entry\n");
 
@@ -438,16 +491,37 @@ hello_start(void *arg1)
 	 * However blobstore can be more tightly integrated into
 	 * any lower layer, such as NVMe for example.
 	 */
-	rc = spdk_bdev_create_bs_dev_ext("Nvme0n1", base_bdev_event_cb, NULL, &bs_dev);
-	if (rc != 0) {
-		SPDK_ERRLOG("Could not create blob bdev, %s!!\n",
-			    spdk_strerror(-rc));
+
+	/* open bdev */
+	SPDK_NOTICELOG("Opening the bdev Nvme0n1\n");
+	rc = spdk_bdev_open_ext("Nvme0n1", true, hello_bdev_event_cb, NULL,
+				&hello_context->bdev_desc);
+	if (rc) {
+		SPDK_ERRLOG("Could not open bdev: Nvme0n1\n");
 		spdk_app_stop(-1);
 		return;
 	}
-	
-	hello_context->bs_dev = bs_dev;
-	spdk_bs_init(bs_dev, NULL, bs_init_complete, hello_context);
+	/* A bdev pointer is valid while the bdev is opened. */
+	hello_context->bdev = spdk_bdev_desc_get_bdev(hello_context->bdev_desc);
+
+	SPDK_NOTICELOG("Opening io channel\n");
+	/* Open I/O channel */
+	hello_context->bdev_io_channel = spdk_bdev_get_io_channel(hello_context->bdev_desc);
+	if (hello_context->bdev_io_channel == NULL) {
+		SPDK_ERRLOG("Could not create bdev I/O channel!!\n");
+		spdk_bdev_close(hello_context->bdev_desc);
+		spdk_app_stop(-1);
+		return;
+	}
+
+	/* reset zone*/
+	if (spdk_bdev_is_zoned(hello_context->bdev)) {
+		hello_reset_zone(hello_context);
+		/* If bdev is zoned, the callback, reset_zone_complete, will call hello_write() */
+		return; //???
+	}
+
+	bs_init(hello_context);
 }
 
 int
