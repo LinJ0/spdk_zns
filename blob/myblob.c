@@ -393,7 +393,7 @@ bs_init(void *arg1)
     int rc = 0;
 
     SPDK_NOTICELOG("entry\n");
-
+	printf("SHIT!!!\n");
 	/* init blob storage */
     rc = spdk_bdev_create_bs_dev_ext("Nvme0n1", base_bdev_event_cb, NULL, &bs_dev);
     if (rc != 0) {
@@ -422,7 +422,7 @@ reset_zone_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 		spdk_app_stop(-1);
 		return;
 	}
-
+	SPDK_NOTICELOG("Reset zone complete\n");
 	bs_init(hello_context);
 }
 
@@ -471,6 +471,8 @@ hello_start(void *arg1)
 {
 	struct hello_context_t *hello_context = arg1;
 	int rc = 0;
+	hello_context->bdev = NULL;
+	hello_context->bdev_desc = NULL;
 
 	SPDK_NOTICELOG("entry\n");
 
@@ -516,9 +518,10 @@ hello_start(void *arg1)
 
 	/* reset zone*/
 	if (spdk_bdev_is_zoned(hello_context->bdev)) {
+		SPDK_NOTICELOG("Reset zone\n");
 		hello_reset_zone(hello_context);
 		/* If bdev is zoned, the callback, reset_zone_complete, will call hello_write() */
-		return; //???
+		return;
 	}
 
 	bs_init(hello_context);
@@ -543,7 +546,7 @@ main(int argc, char **argv)
 	 * specify a name for the app.
 	 */
 	opts.name = "hello_blob";
-	opts.json_config_file = argv[2];
+	opts.json_config_file = argv[1];
 
 
 	/*
