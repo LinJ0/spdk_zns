@@ -7,6 +7,8 @@
 #include "spdk/string.h"
 #include "spdk/log.h"
 
+#include "spdk/event.h"
+
 struct ctrlr_entry {
 	struct spdk_nvme_ctrlr		*ctrlr;
 	TAILQ_ENTRY(ctrlr_entry)	link;
@@ -361,10 +363,8 @@ cleanup(void)
 }
 
 static void
-usage(const char *program_name)
+usage()
 {
-	printf("%s [options]", program_name);
-	printf("\t\n");
 	printf("options:\n");
 	printf("\t[-d DPDK huge memory size in MB]\n");
 	printf("\t[-g use single file descriptor for DPDK memory segments]\n");
@@ -378,10 +378,13 @@ usage(const char *program_name)
 #endif
 }
 
+
 static int
-parse_args(int argc, char **argv, struct spdk_env_opts *env_opts)
+parse_args(int argc, char **argv)
 {
+/*
 	int op, rc;
+	
 
 	spdk_nvme_trid_populate_transport(&g_trid, SPDK_NVME_TRANSPORT_PCIE);
 	snprintf(g_trid.subnqn, sizeof(g_trid.subnqn), "%s", SPDK_NVMF_DISCOVERY_NQN);
@@ -426,13 +429,28 @@ parse_args(int argc, char **argv, struct spdk_env_opts *env_opts)
 #endif
 			break;
 		default:
-			usage(argv[0]);
+			usage();
 			return 1;
 		}
-	}
+	}*/
 
 	return 0;
 }
+
+/*
+static void
+usage(void)
+{
+	printf("[--------- test ---------]\n");
+}
+
+
+static int
+parse_arg(int argc, char *argv)
+{
+	return 0;
+}
+*/
 
 int
 main(int argc, char **argv)
@@ -447,9 +465,15 @@ main(int argc, char **argv)
 	 *
 	 */
 	spdk_env_opts_init(&opts);
+	/*
 	rc = parse_args(argc, argv, &opts);
 	if (rc != 0) {
 		return rc;
+	}
+	*/
+	rc = spdk_app_parse_args(argc, argv, &opts, "", NULL, parse_args, usage);
+	if (rc != SPDK_APP_PARSE_ARGS_SUCCESS) {
+		exit(rc);
 	}
 
 	opts.name = "hello_world";
