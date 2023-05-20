@@ -448,6 +448,16 @@ appstart(void *arg)
     snprintf(req_context->buff, req_context->buff_size, "%s", "Hello World!\n");
 
     get_zone_info(req_context);
+
+    /* bdev_iocmd Flow:
+     * read x2              (initialize app in  main())
+     * zone receive x1      (to get zone capacity)
+     * zone send reset x5   (zone #0 ~ zone #14)
+     * zone append x5       (zone #0 ~ zone #4)
+     * read x5              (zone #0 ~ zone #4)
+     * zone send open x5    (zone #5 ~ zone #9)
+     * zone send close x5   (zone #10 ~ zone #14)
+     */
 }
 
 int
