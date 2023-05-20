@@ -76,110 +76,101 @@ appstop_success(struct request_context_t *req_context)
     spdk_app_stop(0);
 }
 
-/* read start 
-uint64_t r_complete = 0;
+/* close zone start */
+uint64_t close_complete = 0;
 
 static void
-read_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
+close_zone_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
     struct request_context_t *req_context = cb_arg;
 
     spdk_bdev_free_io(bdev_io);
 
     if (success) {
-        r_complete++;
-        //SPDK_NOTICELOG("Read string from bdev : %s\n", req_context->buff);
+        close_complete++;
     } else {
         SPDK_ERRLOG("bdev io read error\n");
         appstop_error(req_context);
     }
 
-    if (r_complete == g_num_io) {
-        printf("Read bdev complete\n");
+    if (close_complete == 5) {
+        printf("Close complete\n");
         appstop_success(req_context);
     }
-
 }
 
 static void
-read_bdev(void *arg)
+close_zone(void *arg)
 {
     struct request_context_t *req_context = arg;
     int rc = 0;
 
-    printf("Reading the bdev...\n");
-    
-    uint64_t num_blocks = 1;
-    for (uint64_t i = 0, offset_blocks = 0; i < g_num_io; i++, offset_blocks++) {
-        // Zero the buffer so that we can use it for reading 
-        memset(req_context->buff, 0, req_context->buff_size);
-        rc = spdk_bdev_read_blocks(req_context->bdev_desc, req_context->bdev_io_channel,
-                    req_context->buff, offset_blocks, num_blocks, 
-                    read_complete, req_context);
+    printf("Close zone #10 ~ zone #14...\n");
 
+    for (uint64_t zone = 10; zone < 15; zone++) {
+        rc = spdk_bdev_zone_management(req_context->bdev_desc, req_context->bdev_io_channel,
+                       zone * g_zone_sz_blk, SPDK_BDEV_ZONE_CLOSE, 
+                       close_zone_complete, req_context);
         if (rc == -ENOMEM) {
             SPDK_NOTICELOG("Queueing io\n");
-            queue_io_wait_with_cb(req_context, read_bdev);
+            queue_io_wait_with_cb(req_context, close_zone);
         } else if (rc) {
-            SPDK_ERRLOG("%s error while reading from bdev: %d\n", spdk_strerror(-rc), rc);
+            SPDK_ERRLOG("%s error while writing to bdev: %d\n", spdk_strerror(-rc), rc);
             appstop_error(req_context);
         }
     }
-   
-}
- read end */
+}  
+/* close zone end */
 
-/* write start 
-uint64_t w_complete = 0;
+/* open zone start */
+uint64_t open_complete = 0;
 
-static void
-write_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
+static void 
+open_zone_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
     struct request_context_t *req_context = cb_arg;
 
     spdk_bdev_free_io(bdev_io);
 
     if (success) {
-        w_complete++;
+        open_complete++;
     } else {
-        SPDK_ERRLOG("bdev io write error: %d\n", EIO);
+        SPDK_ERRLOG("bdev io read error\n");
         appstop_error(req_context);
-        return;
     }
 
-    if (w_complete == g_num_io) {
-        printf("Write bdev complete\n");
-        read_bdev(req_context);
+    if (open_complete == 10) {
+        printf("Open complete\n");
+        //appstop_success(req_context);
+        close_zone(req_context);
     }
+
 }
 
 static void
-write_bdev(void *arg)
+open_zone(void *arg)
 {
     struct request_context_t *req_context = arg;
     int rc = 0;
 
-    printf("Writing to the bdev...\n");
+    printf("Open zone #5 ~ zone #14...\n");
 
-    g_num_io = g_num_blk;
-    uint64_t num_blocks = 1;
-    for (uint64_t i = 0, offset_blocks = 0; i < g_num_io; i++, offset_blocks++) {
-        rc = spdk_bdev_write_blocks(req_context->bdev_desc, req_context->bdev_io_channel,
-                                req_context->buff, offset_blocks, num_blocks, 
-                                write_complete, req_context);
-
+    for (uint64_t zone = 5; zone < 15; zone++) {
+        rc = spdk_bdev_zone_management(req_context->bdev_desc, req_context->bdev_io_channel,
+                       zone * g_zone_sz_blk, SPDK_BDEV_ZONE_OPEN, 
+                       open_zone_complete, req_context);
         if (rc == -ENOMEM) {
             SPDK_NOTICELOG("Queueing io\n");
-            queue_io_wait_with_cb(req_context, write_bdev);
+            queue_io_wait_with_cb(req_context, open_zone);
         } else if (rc) {
             SPDK_ERRLOG("%s error while writing to bdev: %d\n", spdk_strerror(-rc), rc);
             appstop_error(req_context);
         }
     }
-}
- write end */
+}  
+/* open zone end */
 
-/* read zone start 
+/* read zone start */ 
 uint64_t rz_complete = 0;
 
 static void
@@ -191,15 +182,16 @@ read_zone_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 
     if (success) {
         rz_complete++;
-        //printf("%s", req_context->buff);
+        printf("%s", req_context->buff);
     } else {
         SPDK_ERRLOG("bdev io read error\n");
         appstop_error(req_context);
     }
 
     if (rz_complete == g_num_io) {
-        printf("Read bdev complete\n");
-        appstop_success(req_context);
+        printf("Read complete\n");
+        //appstop_success(req_context);
+        open_zone(req_context);
     }
 
 }
@@ -210,48 +202,28 @@ read_zone(void *arg)
     struct request_context_t *req_context = arg;
     int rc = 0;
 
-    printf("Reading the bdev...\n");
+    printf("Read zone #0 ~ zone #4...\n");
    
     uint64_t num_blocks = 1;
     uint64_t offset_blocks = 0;
-    for (uint32_t zone = 0; zone < 1; zone++) {
-        offset_blocks = zone * g_zone_sz_blk;
-        for (; offset_blocks < zone * g_zone_sz_blk + g_zone_capacity; offset_blocks++) {        
-            // Zero the buffer so that we can use it for reading 
-            memset(req_context->buff, 0, req_context->buff_size);
-            rc = spdk_bdev_read_blocks(req_context->bdev_desc, req_context->bdev_io_channel,
-                    req_context->buff, offset_blocks, num_blocks, 
-                    read_zone_complete, req_context);
-            if (rc == -ENOMEM) {
-                SPDK_NOTICELOG("Queueing io\n");
-                queue_io_wait_with_cb(req_context, read_zone);
-            } else if (rc) {
-                SPDK_ERRLOG("%s error while writing to bdev: %d\n", spdk_strerror(-rc), rc);
-                appstop_error(req_context);
-            }   
-        }
-    }  
-
-
-    uint64_t num_blocks = 1;
-    for (uint64_t i = 0, offset_blocks = 0; i < g_num_io; i++, offset_blocks++) {
+    for (uint64_t zone = 0; zone < g_num_io; zone++) {
+        offset_blocks = zone * g_zone_sz_blk; 
         // Zero the buffer so that we can use it for reading 
         memset(req_context->buff, 0, req_context->buff_size);
+        printf("read: offset_blocks = 0x%lx\n", offset_blocks);
         rc = spdk_bdev_read_blocks(req_context->bdev_desc, req_context->bdev_io_channel,
-                    req_context->buff, offset_blocks, num_blocks, 
-                    read_zone_complete, req_context);
-
+                                req_context->buff, offset_blocks, num_blocks, 
+                                read_zone_complete, req_context);
         if (rc == -ENOMEM) {
             SPDK_NOTICELOG("Queueing io\n");
             queue_io_wait_with_cb(req_context, read_zone);
         } else if (rc) {
-            SPDK_ERRLOG("%s error while reading from bdev: %d\n", spdk_strerror(-rc), rc);
+            SPDK_ERRLOG("%s error while writing to bdev: %d\n", spdk_strerror(-rc), rc);
             appstop_error(req_context);
         }
     }
-   
-}
- read zone end */
+}  
+/* read zone end */
 
 /* append zone start */
 uint64_t az_complete = 0;
@@ -270,16 +242,11 @@ append_zone_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
         appstop_error(req_context);
         return;
     }
-/*
-    if (az_complete % g_zone_capacity == 0) {
-        g_tick = spdk_get_ticks();
-        printf("tick = %ld\n", g_tick);
-    }   
-*/  
+    
     if (az_complete == g_num_io) {
-        printf("Append bdev complete...\n");
-        //read_zone(req_context);
-        appstop_success(req_context);
+        printf("Append complete...\n");
+        read_zone(req_context);
+       // appstop_success(req_context);
     }
 }
 
@@ -289,40 +256,19 @@ append_zone(void *arg)
     struct request_context_t *req_context = arg;
     int rc = 0;
 
-    printf("Append to the bdev...\n");
-   
-    if (g_max_active_zone == 0) {
-        g_num_io = g_num_zone * g_zone_capacity;
-    } else {
-        g_num_io = 1 * g_zone_capacity;//g_max_open_zone * g_zone_capacity;
-    }
-
+    printf("Append & implicit open zone #0 ~ zone #4...\n");
     uint64_t zone_id = 0;
     uint64_t num_blocks = 1;
     uint64_t offset_blocks = 0;
-    for (uint32_t zone = 0; zone < 1; zone++) {
-        offset_blocks = zone * g_zone_sz_blk;
-        for (; offset_blocks < zone * g_zone_sz_blk + g_zone_capacity; offset_blocks++) {
-            zone_id =spdk_bdev_get_zone_id(req_context->bdev, offset_blocks);
-            rc = spdk_bdev_zone_append(req_context->bdev_desc, req_context->bdev_io_channel,
-                                req_context->buff, zone_id, num_blocks, 
-                                append_zone_complete, req_context);
-            if (rc == -ENOMEM) {
-                SPDK_NOTICELOG("Queueing io\n");
-                queue_io_wait_with_cb(req_context, append_zone);
-            } else if (rc) {
-                SPDK_ERRLOG("%s error while writing to bdev: %d\n", spdk_strerror(-rc), rc);
-                appstop_error(req_context);
-            }   
-        }
-    }  
-/*
-    for (uint64_t i = 0, offset_blocks = 0; i < g_num_io; i++, offset_blocks++) {
+    g_num_io = 5;
+
+    for (uint64_t zone = 0; zone < g_num_io; zone++) {
+        offset_blocks = zone * g_zone_sz_blk + 87; // 87 is a random number
         zone_id =spdk_bdev_get_zone_id(req_context->bdev, offset_blocks);
-        //printf("offset_blocks = 0x%lx, zone_id=0x%lx\n", offset_blocks, zone_id);
+        printf("append: offset_blocks = 0x%lx, zone_id=0x%lx\n", offset_blocks, zone_id);
         rc = spdk_bdev_zone_append(req_context->bdev_desc, req_context->bdev_io_channel,
                                 req_context->buff, zone_id, num_blocks, 
-                                append_complete, req_context);
+                                append_zone_complete, req_context);
         if (rc == -ENOMEM) {
             SPDK_NOTICELOG("Queueing io\n");
             queue_io_wait_with_cb(req_context, append_zone);
@@ -331,7 +277,6 @@ append_zone(void *arg)
             appstop_error(req_context);
         }   
     }
-*/   
 }
 /* append zone end */
 
@@ -343,7 +288,6 @@ reset_zone_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
     struct request_context_t *req_context = cb_arg;
 
-    /* Complete the I/O */
     spdk_bdev_free_io(bdev_io);
     
     if (success) {
@@ -354,8 +298,8 @@ reset_zone_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
         return;
 	}
 
-    if (reset_complete == g_num_zone) {
-        printf("Reset all zone complete\n");
+    if (reset_complete == 15) {
+        printf("Reset zone complete\n");
         append_zone(req_context);
     }    
 }
@@ -366,11 +310,11 @@ reset_zone(void *arg)
     struct request_context_t *req_context = arg;
     int rc = 0;
 
-    printf("Reset all zone...\n");
+    printf("Reset zone #0 ~ zone #14...\n");
 
-    for (uint64_t i = 0; i < g_num_zone; i++) {
+    for (uint64_t zone = 0; zone < 15; zone++) {
         rc = spdk_bdev_zone_management(req_context->bdev_desc, req_context->bdev_io_channel,
-                       i * g_zone_sz_blk, SPDK_BDEV_ZONE_RESET, 
+                       zone * g_zone_sz_blk, SPDK_BDEV_ZONE_RESET, 
                        reset_zone_complete, req_context);
 
         if (rc == -ENOMEM) {
@@ -503,13 +447,7 @@ appstart(void *arg)
     }
     snprintf(req_context->buff, req_context->buff_size, "%s", "Hello World!\n");
 
-    if (spdk_bdev_is_zoned(req_context->bdev)) {
-        get_zone_info(req_context);
-        return;
-	}
-
-	//write_bdev(req_context);
-
+    get_zone_info(req_context);
 }
 
 int
@@ -520,7 +458,7 @@ main(int argc, char **argv)
     struct request_context_t req_context = {};
 
     spdk_app_opts_init(&opts, sizeof(opts));
-    opts.name = "seqwrite";
+    opts.name = "bdev_iocmd";
 
     /* Parse built-in SPDK command line parameters to enable spdk trace*/
     if ((rc = spdk_app_parse_args(argc, argv, &opts, "b:", NULL, parse_arg,
